@@ -114,6 +114,7 @@ class Sparse_Connect(nn.Module):
             assert (w == w_sign*th*(th>0)).all()
 
         self.is_sparse_connect = True
+        self.is_deepR_connect = True
             
     def forward(self, x, relu=False) : 
         if type(x) is tuple : 

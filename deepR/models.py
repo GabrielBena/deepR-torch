@@ -89,47 +89,6 @@ class Sparse_Net_Soft(nn.Module):
                 x = F.log_softmax(x, dim=1)
         
         return x
-
-class Sparse_Connect(nn.Module):
-    """
-    Sparse network to be trained with DeepR, used as connections in a global model
-    Args : 
-        dims : dimensions of the network
-        sparsity_list : sparsities of the different layers
-    """
-    def __init__(self, dims, sparsity_list):
-        super().__init__()
-        self.thetas = torch.nn.ParameterList()
-        self.weight = torch.nn.ParameterList()
-        self.signs = torch.nn.ParameterList()
-        self.sparsity_list = sparsity_list
-        self.out_features = dims[-1]
-        self.bias = None
-        self.nb_non_zero_list = [int(d1*d2*p) for (d1, d2, p) in zip(dims[:-1], dims[1:], sparsity_list)]
-        for d1, d2, nb_non_zero in zip(dims[:-1], dims[1:], self.nb_non_zero_list) :
-            w, w_sign, th, _ = weight_sampler_strict_number(d1, d2, nb_non_zero)
-            self.thetas.append(th)
-            self.weight.append(w)
-            self.signs.append(w_sign)
-            assert (w == w_sign*th*(th>0)).all()
-
-        self.is_sparse_connect = True
-        self.is_deepR_connect = True
-            
-    def forward(self, x, relu=False) : 
-        if type(x) is tuple : 
-            x = x[0]
-        if len(x.shape)>3 : 
-            print(x.shape)
-            #x = x.transpose(1, 2).flatten(start_dim=2)
-        for i, (th, sign) in enumerate(zip(self.thetas, self.signs)) : 
-        
-            w = th*sign*(th>0)
-            #x = F.linear(x, w)
-            x = torch.matmul(x, w)
-            if relu : 
-                x = F.relu(x)
-        return x
                
 def weight_sampler_strict_number(n_in, n_out, nb_non_zero, dtype=torch.float32):
     '''
@@ -342,16 +301,17 @@ def step_connections(model, optimizer_connections, global_rewire, thetas_list, s
     """
     #Apply gradient for sparse connections
     for tag, connect in zip(model.connections.keys(), model.connections.values()) : 
-        if type(connect) is Sparse_Connect : 
+        if connect.is_deepR_connect : 
             for theta in connect.thetas : 
                 apply_grad(theta, deepR_params_dict, tag=tag)
     
     optimizer_connections.step()
+
     #Rewire sparse connections
     nb_new_con = 0
     if not global_rewire : 
         for connect in model.connections.values() :    
-            if type(connect) is Sparse_Connect : 
+            if connect.is_deepR_connect : 
                 for theta, nb_connect in zip(connect.thetas, connect.nb_non_zero_list) : 
                     if theta.requires_grad : 
                         ''
@@ -362,11 +322,10 @@ def step_connections(model, optimizer_connections, global_rewire, thetas_list, s
     else : 
         nb_reconnections = sample_matrix_specific_reconnection_number_for_global_fixed_connectivity(thetas_list, sparsity_list)
         for connect, nb_reconnect in zip(model.connections.values(), nb_reconnections) : 
-            if type(connect) is Sparse_Connect : 
+            if connect.is_deepR_connect : 
                 if theta.requires_grad : 
                     nb_new_con += rewiring_global(connect.thetas[0], nb_reconnect)
                 else : 
                     nb_new_con += 0
                 
-    #print(nb_new_con)
     return nb_new_con
